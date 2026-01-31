@@ -16,8 +16,13 @@ class ImageProcessor:
         self.tolerance = 30
         self.edge_trim = 0
         
+        # Resizing
+        self.resize_w = 0
+        self.resize_h = 0
+        self.use_resize = False
+        
         # Compression (Color Quantization)
-        self.max_colors = 256 # 256 means no compression (standard 32-bit)
+        self.max_colors = 256
 
     def set_crop_margins(self, left, top, right, bottom):
         self.margin_left = left
@@ -31,6 +36,11 @@ class ImageProcessor:
         self.target_color_rgb = color_rgb
         self.tolerance = tolerance
         self.edge_trim = edge_trim
+
+    def set_resize(self, enabled, w, h):
+        self.use_resize = enabled
+        self.resize_w = w
+        self.resize_h = h
 
     def set_compression(self, max_colors):
         self.max_colors = max_colors
@@ -74,18 +84,18 @@ class ImageProcessor:
             rgba = cv2.cvtColor(result, cv2.COLOR_RGB2RGBA)
             rgba[:, :, 3] = solid_foreground
             result = rgba
+
+        # 3. Apply Resize
+        if self.use_resize and self.resize_w > 0 and self.resize_h > 0:
+            # We use INTER_AREA for downscaling as it's less prone to moiré
+            result = cv2.resize(result, (self.resize_w, self.resize_h), interpolation=cv2.INTER_AREA)
         
-        # 3. Apply Compression (Color Quantization)
-        # We only apply if max_colors is less than 256
+        # 4. Apply Compression (Color Quantization)
         if self.max_colors < 256:
-            # Convert to PIL for quantization
             if result.shape[2] == 4:
                 pil_img = Image.fromarray(result, 'RGBA')
-                # Quantize while preserving alpha
                 alpha = pil_img.getchannel('A')
-                # Convert to 'P' mode (indexed color)
                 quantized = pil_img.convert('RGB').quantize(colors=self.max_colors)
-                # Convert back to RGBA and re-apply original alpha
                 result_pil = quantized.convert('RGBA')
                 result_pil.putalpha(alpha)
                 result = np.array(result_pil)

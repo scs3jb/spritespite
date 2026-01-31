@@ -16,18 +16,13 @@ class MultiFrameDialog(QDialog):
         self.resize(900, 700)
         self.video_loader = video_loader
         self.selected_frames = []
-        
         layout = QVBoxLayout(self)
-        
-        # Scroll Area for thumbnails
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         self.container = QWidget()
         self.grid = QGridLayout(self.container)
         scroll.setWidget(self.container)
         layout.addWidget(scroll)
-        
-        # Buttons
         btn_layout = QHBoxLayout()
         ok_btn = QPushButton("OK")
         ok_btn.clicked.connect(self.accept)
@@ -37,39 +32,28 @@ class MultiFrameDialog(QDialog):
         btn_layout.addWidget(ok_btn)
         btn_layout.addWidget(cancel_btn)
         layout.addLayout(btn_layout)
-        
         self.checkboxes = {}
         self._populate()
 
     def _populate(self):
-        # We generate thumbnails for all frames
-        # For performance in long videos, we cap the display or use steps
-        # but here we'll try to show them all as requested, using a small size.
         count = self.video_loader.frame_count
         cols = 5
-        
         for i in range(count):
             frame_vbox = QVBoxLayout()
-            
-            # Thumbnail
             thumb_label = QLabel()
             thumb_label.setFixedSize(160, 90)
             thumb_label.setStyleSheet("background-color: black;")
             thumb_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            
             frame = self.video_loader.get_frame(i)
             if frame is not None:
                 h, w = frame.shape[:2]
                 qimg = QImage(frame.data, w, h, 3 * w, QImage.Format.Format_RGB888).copy()
                 pix = QPixmap.fromImage(qimg).scaled(160, 90, Qt.AspectRatioMode.KeepAspectRatio)
                 thumb_label.setPixmap(pix)
-            
             cb = QCheckBox(f"Frame {i}")
             self.checkboxes[i] = cb
-            
             frame_vbox.addWidget(thumb_label)
             frame_vbox.addWidget(cb)
-            
             frame_widget = QWidget()
             frame_widget.setLayout(frame_vbox)
             self.grid.addWidget(frame_widget, i // cols, i % cols)
@@ -198,35 +182,32 @@ class MainWindow(QMainWindow):
     add_current_frame_requested = pyqtSignal()
     multi_select_requested = pyqtSignal()
     compression_changed = pyqtSignal(int)
+    resize_changed = pyqtSignal(bool, int, int)
 
     def __init__(self, on_open_file_callback):
         super().__init__()
         self.setWindowTitle("SpriteSpite")
-        self.resize(1200, 900)
+        self.resize(1300, 900)
         self.on_open_file_callback = on_open_file_callback
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_layout = QHBoxLayout(central_widget)
 
-        # Left Panel
-        self.left_panel = QFrame()
-        self.left_panel.setFixedWidth(340)
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setFixedWidth(400)
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        
+        self.left_panel = QWidget()
         left_layout = QVBoxLayout(self.left_panel)
         
         self.open_button = QPushButton("Open Video/GIF")
         self.open_button.clicked.connect(self._handle_open_file)
         left_layout.addWidget(self.open_button)
         
-        info_group = QGroupBox("File Info")
-        info_layout = QVBoxLayout()
-        self.info_label = QLabel("No file loaded")
-        info_group.setLayout(info_layout)
-        left_layout.addWidget(info_group)
-
         # Selection Group
         sel_group = QGroupBox("Frame Selection")
         sel_layout = QVBoxLayout()
-        
         mode_layout = QHBoxLayout()
         self.range_radio = QRadioButton("Range")
         self.range_radio.setChecked(True)
@@ -234,8 +215,6 @@ class MainWindow(QMainWindow):
         mode_layout.addWidget(self.range_radio)
         mode_layout.addWidget(self.individual_radio)
         sel_layout.addLayout(mode_layout)
-        
-        # Range sub-panel
         self.range_widget = QWidget()
         range_fl = QFormLayout(self.range_widget)
         self.start_frame_spin = QSpinBox()
@@ -243,8 +222,6 @@ class MainWindow(QMainWindow):
         range_fl.addRow("Start:", self.start_frame_spin)
         range_fl.addRow("End:", self.end_frame_spin)
         sel_layout.addWidget(self.range_widget)
-        
-        # Individual sub-panel
         self.individual_widget = QWidget()
         self.individual_widget.setVisible(False)
         indiv_layout = QVBoxLayout(self.individual_widget)
@@ -255,44 +232,81 @@ class MainWindow(QMainWindow):
         self.add_frame_btn = QPushButton("Add Current Frame")
         self.add_frame_btn.clicked.connect(lambda: self.add_current_frame_requested.emit())
         indiv_layout.addWidget(self.add_frame_btn)
-        
         self.multi_frame_btn = QPushButton("Select Multiple Frames...")
         self.multi_frame_btn.clicked.connect(lambda: self.multi_select_requested.emit())
         indiv_layout.addWidget(self.multi_frame_btn)
-        
         sel_layout.addWidget(self.individual_widget)
-        
         self.range_radio.toggled.connect(lambda b: self.range_widget.setVisible(b))
         self.individual_radio.toggled.connect(lambda b: self.individual_widget.setVisible(b))
-        
         sel_group.setLayout(sel_layout)
         left_layout.addWidget(sel_group)
 
-        # Cropping/Chroma Group
-        crop_group = QGroupBox("Cropping (Margins)")
+        crop_resize_container = QWidget()
+        crop_resize_layout = QHBoxLayout(crop_resize_container)
+        crop_resize_layout.setContentsMargins(0, 0, 0, 0)
+
+        # Cropping Group (Header Checkbox for Preview)
+        self.crop_group = QGroupBox("Crop (Preview)")
+        self.crop_group.setCheckable(True)
+        self.crop_group.setChecked(False)
+        # We manually manage the enabled state because Qt disables children by default
+        self.crop_group.toggled.connect(self._handle_crop_toggle)
+        
         crop_layout = QFormLayout()
         self.crop_left_spin = QSpinBox()
         self.crop_top_spin = QSpinBox()
         self.crop_right_spin = QSpinBox()
         self.crop_bottom_spin = QSpinBox()
-        for s in [self.crop_left_spin, self.crop_top_spin, self.crop_right_spin, self.crop_bottom_spin]:
+        self.crop_widgets = [self.crop_left_spin, self.crop_top_spin, self.crop_right_spin, self.crop_bottom_spin]
+        
+        for s in self.crop_widgets:
             s.setRange(0, 9999)
             s.valueChanged.connect(self._handle_crop_change)
-        crop_layout.addRow("Left:", self.crop_left_spin)
-        crop_layout.addRow("Top:", self.crop_top_spin)
-        crop_layout.addRow("Right:", self.crop_right_spin)
-        crop_layout.addRow("Bottom:", self.crop_bottom_spin)
-        self.reset_crop_button = QPushButton("Reset Crop")
+        crop_layout.addRow("L:", self.crop_left_spin)
+        crop_layout.addRow("T:", self.crop_top_spin)
+        crop_layout.addRow("R:", self.crop_right_spin)
+        crop_layout.addRow("B:", self.crop_bottom_spin)
+        self.reset_crop_button = QPushButton("Reset")
         self.reset_crop_button.clicked.connect(self.reset_crop)
+        self.crop_widgets.append(self.reset_crop_button)
         crop_layout.addRow(self.reset_crop_button)
-        crop_group.setLayout(crop_layout)
-        left_layout.addWidget(crop_group)
+        self.crop_group.setLayout(crop_layout)
+        crop_resize_layout.addWidget(self.crop_group)
+        
+        # Ensure crop widgets are enabled initially even though group is unchecked
+        for w in self.crop_widgets:
+            w.setEnabled(True)
 
-        chroma_group = QGroupBox("Chroma Key")
+        # Resizing Group (Header Checkbox for Enable)
+        self.resize_group = QGroupBox("Resize (Enable)")
+        self.resize_group.setCheckable(True)
+        self.resize_group.setChecked(False)
+        self.resize_group.toggled.connect(self._handle_resize_change)
+        resize_layout = QVBoxLayout()
+        self.resize_preset_combo = QComboBox()
+        self.resize_preset_combo.addItems(["Orig", "16x16", "32x32", "64x64", "128x128", "256x256", "512x512", "Manual"])
+        self.resize_preset_combo.currentTextChanged.connect(self._handle_resize_preset)
+        resize_layout.addWidget(self.resize_preset_combo)
+        manual_resize_layout = QFormLayout()
+        self.resize_w_spin = QSpinBox()
+        self.resize_w_spin.setRange(1, 4096)
+        self.resize_h_spin = QSpinBox()
+        self.resize_h_spin.setRange(1, 4096)
+        self.resize_w_spin.valueChanged.connect(self._handle_resize_change)
+        self.resize_h_spin.valueChanged.connect(self._handle_resize_change)
+        manual_resize_layout.addRow("W:", self.resize_w_spin)
+        manual_resize_layout.addRow("H:", self.resize_h_spin)
+        resize_layout.addLayout(manual_resize_layout)
+        self.resize_group.setLayout(resize_layout)
+        crop_resize_layout.addWidget(self.resize_group)
+        left_layout.addWidget(crop_resize_container)
+
+        # Chroma Group (Header Checkbox for Enable)
+        self.chroma_group = QGroupBox("Chroma Key (Enable)")
+        self.chroma_group.setCheckable(True)
+        self.chroma_group.setChecked(False)
+        self.chroma_group.toggled.connect(self._handle_chroma_change)
         chroma_layout = QVBoxLayout()
-        self.chroma_enable_check = QCheckBox("Enable Chroma Key")
-        self.chroma_enable_check.stateChanged.connect(self._handle_chroma_change)
-        chroma_layout.addWidget(self.chroma_enable_check)
         color_row = QHBoxLayout()
         self.pick_color_button = QPushButton("Pick Color")
         self.pick_color_button.setCheckable(True)
@@ -316,12 +330,8 @@ class MainWindow(QMainWindow):
         self.edge_trim_slider.setValue(0)
         self.edge_trim_slider.valueChanged.connect(self._handle_chroma_change)
         chroma_layout.addWidget(self.edge_trim_slider)
-        chroma_group.setLayout(chroma_layout)
-        left_layout.addWidget(chroma_group)
-        
-        self.show_cropped_check = QCheckBox("Show Cropped Result")
-        self.show_cropped_check.stateChanged.connect(lambda: self.frame_changed.emit(self.scrub_slider.value()))
-        left_layout.addWidget(self.show_cropped_check)
+        self.chroma_group.setLayout(chroma_layout)
+        left_layout.addWidget(self.chroma_group)
 
         # Export Group
         export_group = QGroupBox("Export")
@@ -335,17 +345,14 @@ class MainWindow(QMainWindow):
         self.cols_spin.setSpecialValueText("Auto")
         export_layout.addWidget(QLabel("Columns:"))
         export_layout.addWidget(self.cols_spin)
-        
         export_layout.addWidget(QLabel("Color Limit (Compression):"))
         self.compression_slider = QSlider(Qt.Orientation.Horizontal)
         self.compression_slider.setRange(2, 256)
         self.compression_slider.setValue(256)
-        self.compression_slider.setToolTip("Lower values reduce file size but lose color detail.")
         self.compression_slider.valueChanged.connect(self._handle_compression_change)
         export_layout.addWidget(self.compression_slider)
         self.comp_label = QLabel("Mode: 32-bit (Original)")
         export_layout.addWidget(self.comp_label)
-        
         self.export_button = QPushButton("Process & Export")
         self.export_button.setStyleSheet("background-color: #2c5a2c; font-weight: bold;")
         self.export_button.clicked.connect(self._handle_export)
@@ -357,7 +364,9 @@ class MainWindow(QMainWindow):
         left_layout.addWidget(export_group)
         left_layout.addStretch()
         
-        # Right Panel
+        self.scroll_area.setWidget(self.left_panel)
+        main_layout.addWidget(self.scroll_area)
+
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
         self.preview_label = PreviewLabel()
@@ -377,7 +386,6 @@ class MainWindow(QMainWindow):
         bottom_nav.addWidget(self.play_button)
         nav_layout.addLayout(bottom_nav)
         right_layout.addLayout(nav_layout)
-        main_layout.addWidget(self.left_panel)
         main_layout.addWidget(right_panel)
 
     def _handle_open_file(self):
@@ -400,13 +408,32 @@ class MainWindow(QMainWindow):
         self.pick_color_button.setChecked(False); self._handle_chroma_change()
 
     def _handle_chroma_change(self):
-        self.chroma_changed.emit(self.chroma_enable_check.isChecked(), self.chroma_color, self.tolerance_slider.value(), self.edge_trim_slider.value())
+        self.chroma_changed.emit(self.chroma_group.isChecked(), self.chroma_color, self.tolerance_slider.value(), self.edge_trim_slider.value())
+
+    def _handle_resize_preset(self, text):
+        if text == "Orig": self.resize_group.setChecked(False)
+        elif text == "Manual": self.resize_group.setChecked(True)
+        else:
+            size = int(text.split('x')[0])
+            for s in [self.resize_w_spin, self.resize_h_spin]: s.blockSignals(True); s.setValue(size); s.blockSignals(False)
+            self.resize_group.setChecked(True)
+        self._handle_resize_change()
+
+    def _handle_resize_change(self):
+        self.resize_changed.emit(self.resize_group.isChecked(), self.resize_w_spin.value(), self.resize_h_spin.value())
+
+    def _handle_crop_toggle(self, checked):
+        # Force children to stay enabled even if group is unchecked
+        # Qt's default behavior is to disable children when a checkable QGroupBox is unchecked.
+        for w in self.crop_widgets:
+            w.setEnabled(True)
+        self.frame_changed.emit(self.scrub_slider.value())
 
     def setup_video_controls(self, c, w, h):
         self.scrub_slider.setRange(0, c - 1); self.start_frame_spin.setRange(0, c - 1)
         self.end_frame_spin.setRange(0, c - 1); self.end_frame_spin.setValue(c - 1)
         for s, m in zip([self.crop_left_spin, self.crop_top_spin, self.crop_right_spin, self.crop_bottom_spin], [w, h, w, h]): s.setRange(0, m - 1)
-        self.reset_crop()
+        self.resize_w_spin.setValue(w); self.resize_h_spin.setValue(h); self.reset_crop()
 
     def reset_crop(self):
         for s in [self.crop_left_spin, self.crop_top_spin, self.crop_right_spin, self.crop_bottom_spin]: s.setValue(0)
@@ -418,14 +445,10 @@ class MainWindow(QMainWindow):
     def _handle_slider_change(self, v): self.frame_changed.emit(v)
 
     def _handle_compression_change(self, val):
-        if val >= 256:
-            self.comp_label.setText("Mode: 32-bit (Original)")
-        else:
-            self.comp_label.setText(f"Mode: 8-bit ({val} colors)")
+        self.comp_label.setText("Mode: 32-bit (Original)" if val >= 256 else f"Mode: 8-bit ({val} colors)")
         self.compression_changed.emit(val)
 
-    def _handle_export(self):
-        self.export_requested.emit(self.export_type_combo.currentText(), self.cols_spin.value())
+    def _handle_export(self): self.export_requested.emit(self.export_type_combo.currentText(), self.cols_spin.value())
 
     def update_preview(self, full, proc, cur, tot):
         self.current_frame_label.setText(f"Frame: {cur}/{tot-1}")
@@ -434,9 +457,6 @@ class MainWindow(QMainWindow):
             h, w = a.shape[:2]; f = QImage.Format.Format_RGB888 if a.shape[2] == 3 else QImage.Format.Format_RGBA8888
             return QPixmap.fromImage(QImage(a.data, w, h, a.strides[0], f).copy())
         m = (self.crop_left_spin.value(), self.crop_top_spin.value(), self.crop_right_spin.value(), self.crop_bottom_spin.value())
-        self.preview_label.set_frame(to_pix(full), to_pix(proc), (full.shape[1], full.shape[0]), m, self.show_cropped_check.isChecked())
+        self.preview_label.set_frame(to_pix(full), to_pix(proc), (full.shape[1], full.shape[0]), m, self.crop_group.isChecked())
 
-    def set_progress(self, v):
-        self.progress_bar.setVisible(0 < v < 100); self.progress_bar.setValue(v)
-
-    def set_info(self, t): self.info_label.setText(t)
+    def set_progress(self, v): self.progress_bar.setVisible(0 < v < 100); self.progress_bar.setValue(v)
