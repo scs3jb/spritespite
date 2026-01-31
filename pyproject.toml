@@ -9,6 +9,7 @@ dependencies = [
     "opencv-python>=4.9.0.80",
     "numpy>=1.26.4",
     "Pillow>=10.2.0",
+    "pyoxipng>=0.1.1",
 ]
 
 [tool.hatch.build.targets.wheel]

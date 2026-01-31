@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 import os
+import oxipng
 from PIL import Image
 from pathlib import Path
 
@@ -91,7 +92,15 @@ class SpriteExporter:
             
             sheet[y:y+f_h, x:x+f_w] = frame
             
-        Image.fromarray(sheet).save(path)
+        # Save PNG with optimization and high compression level
+        Image.fromarray(sheet).save(path, optimize=True, compress_level=9)
+        
+        # Further optimize with oxipng
+        try:
+            oxipng.optimize(path)
+        except Exception as e:
+            print(f"oxipng optimization failed: {e}")
+            
         self._write_godot_meta(path, f_w, f_h, cols, rows, num_frames)
         return True
 
