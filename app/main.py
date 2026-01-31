@@ -33,6 +33,7 @@ class SpriteSpiteApp:
         self.ui.range_changed.connect(self.update_range)
         self.ui.crop_changed.connect(self.update_crop)
         self.ui.chroma_changed.connect(self.update_chroma)
+        self.ui.compression_changed.connect(self.update_compression)
         self.ui.export_requested.connect(self.handle_export)
         self.ui.add_current_frame_requested.connect(self.add_current_frame_to_list)
         self.ui.multi_select_requested.connect(self.open_multi_frame_dialog)
@@ -81,6 +82,10 @@ class SpriteSpiteApp:
             except ValueError:
                 continue
         return indices
+
+    def update_compression(self, max_colors):
+        self.processor.set_compression(max_colors)
+        self.seek_to_frame(self.current_frame_index)
 
     def handle_export(self, fmt_str, cols):
         # Determine which frames to export

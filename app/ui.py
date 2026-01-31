@@ -197,6 +197,7 @@ class MainWindow(QMainWindow):
     export_requested = pyqtSignal(str, int)
     add_current_frame_requested = pyqtSignal()
     multi_select_requested = pyqtSignal()
+    compression_changed = pyqtSignal(int)
 
     def __init__(self, on_open_file_callback):
         super().__init__()
@@ -334,6 +335,17 @@ class MainWindow(QMainWindow):
         self.cols_spin.setSpecialValueText("Auto")
         export_layout.addWidget(QLabel("Columns:"))
         export_layout.addWidget(self.cols_spin)
+        
+        export_layout.addWidget(QLabel("Color Limit (Compression):"))
+        self.compression_slider = QSlider(Qt.Orientation.Horizontal)
+        self.compression_slider.setRange(2, 256)
+        self.compression_slider.setValue(256)
+        self.compression_slider.setToolTip("Lower values reduce file size but lose color detail.")
+        self.compression_slider.valueChanged.connect(self._handle_compression_change)
+        export_layout.addWidget(self.compression_slider)
+        self.comp_label = QLabel("Mode: 32-bit (Original)")
+        export_layout.addWidget(self.comp_label)
+        
         self.export_button = QPushButton("Process & Export")
         self.export_button.setStyleSheet("background-color: #2c5a2c; font-weight: bold;")
         self.export_button.clicked.connect(self._handle_export)
@@ -405,7 +417,15 @@ class MainWindow(QMainWindow):
 
     def _handle_slider_change(self, v): self.frame_changed.emit(v)
 
-    def _handle_export(self): self.export_requested.emit(self.export_type_combo.currentText(), self.cols_spin.value())
+    def _handle_compression_change(self, val):
+        if val >= 256:
+            self.comp_label.setText("Mode: 32-bit (Original)")
+        else:
+            self.comp_label.setText(f"Mode: 8-bit ({val} colors)")
+        self.compression_changed.emit(val)
+
+    def _handle_export(self):
+        self.export_requested.emit(self.export_type_combo.currentText(), self.cols_spin.value())
 
     def update_preview(self, full, proc, cur, tot):
         self.current_frame_label.setText(f"Frame: {cur}/{tot-1}")

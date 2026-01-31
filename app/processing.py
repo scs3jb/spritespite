@@ -1,5 +1,6 @@
 import numpy as np
 import cv2
+from PIL import Image
 
 class ImageProcessor:
     def __init__(self):
@@ -14,6 +15,9 @@ class ImageProcessor:
         self.target_color_rgb = (0, 255, 0)
         self.tolerance = 30
         self.edge_trim = 0
+        
+        # Compression (Color Quantization)
+        self.max_colors = 256 # 256 means no compression (standard 32-bit)
 
     def set_crop_margins(self, left, top, right, bottom):
         self.margin_left = left
@@ -27,6 +31,9 @@ class ImageProcessor:
         self.target_color_rgb = color_rgb
         self.tolerance = tolerance
         self.edge_trim = edge_trim
+
+    def set_compression(self, max_colors):
+        self.max_colors = max_colors
 
     def process_frame(self, frame: np.ndarray) -> np.ndarray:
         result = frame
@@ -46,7 +53,6 @@ class ImageProcessor:
             target_np = np.uint8([[self.target_color_rgb]])
             target_hsv = cv2.cvtColor(target_np, cv2.COLOR_RGB2HSV)[0][0]
             
-            # Create the raw color mask
             lower = np.array([
                 max(0, int(target_hsv[0]) - self.tolerance),
                 max(0, int(target_hsv[1]) - self.tolerance * 2),
@@ -55,28 +61,36 @@ class ImageProcessor:
             upper = np.array([min(180, int(target_hsv[0]) + self.tolerance), 255, 255], dtype=np.uint8)
             
             mask = cv2.inRange(hsv, lower, upper)
-            
-            # --- "Inside/Outside" Logic ---
-            # We want to identify the subject (foreground).
-            # The mask currently contains the background (1s) and subject (0s).
             foreground_mask = cv2.bitwise_not(mask)
-            
-            # Fill holes inside the subject so that inner green-ish pixels are ignored
-            # We find contours of the foreground and fill them.
             contours, _ = cv2.findContours(foreground_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             
             solid_foreground = np.zeros_like(foreground_mask)
             cv2.drawContours(solid_foreground, contours, -1, 255, thickness=cv2.FILLED)
             
-            # Now solid_foreground is a clean "blob" of the subject.
-            # Edge Trim should only affect the boundary of this solid blob.
             if self.edge_trim > 0:
                 kernel = np.ones((3, 3), np.uint8)
                 solid_foreground = cv2.erode(solid_foreground, kernel, iterations=self.edge_trim)
             
-            # Create RGBA image using the solid filled mask
             rgba = cv2.cvtColor(result, cv2.COLOR_RGB2RGBA)
             rgba[:, :, 3] = solid_foreground
-            return rgba
+            result = rgba
         
+        # 3. Apply Compression (Color Quantization)
+        # We only apply if max_colors is less than 256
+        if self.max_colors < 256:
+            # Convert to PIL for quantization
+            if result.shape[2] == 4:
+                pil_img = Image.fromarray(result, 'RGBA')
+                # Quantize while preserving alpha
+                alpha = pil_img.getchannel('A')
+                # Convert to 'P' mode (indexed color)
+                quantized = pil_img.convert('RGB').quantize(colors=self.max_colors)
+                # Convert back to RGBA and re-apply original alpha
+                result_pil = quantized.convert('RGBA')
+                result_pil.putalpha(alpha)
+                result = np.array(result_pil)
+            else:
+                pil_img = Image.fromarray(result, 'RGB')
+                result = np.array(pil_img.quantize(colors=self.max_colors).convert('RGB'))
+                
         return result
