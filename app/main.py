@@ -22,8 +22,14 @@ class SpriteSpiteApp:
         self.playback_timer = QTimer()
         self.playback_timer.timeout.connect(self.next_frame)
         
+        # Timer for scrubbing debounce (improves performance during fast drags)
+        self.scrub_timer = QTimer()
+        self.scrub_timer.setSingleShot(True)
+        self.scrub_timer.timeout.connect(self.perform_scrub)
+        self.pending_scrub_index = 0
+        
         # Connect UI signals
-        self.ui.frame_changed.connect(self.seek_to_frame)
+        self.ui.frame_changed.connect(self.on_scrub_slider_moved)
         self.ui.range_changed.connect(self.update_range)
         self.ui.crop_changed.connect(self.update_crop)
         self.ui.chroma_changed.connect(self.update_chroma)
@@ -123,6 +129,18 @@ class SpriteSpiteApp:
             self.playback_timer.setInterval(interval)
         else:
             self.ui.set_info("Failed to open file.")
+
+    def on_scrub_slider_moved(self, index: int):
+        # If playing, seek immediately (don't debounce playback)
+        if self.playback_timer.isActive():
+            self.seek_to_frame(index)
+        else:
+            # During manual scrubbing, debounce the decode request
+            self.pending_scrub_index = index
+            self.scrub_timer.start(15) # 15ms debounce
+
+    def perform_scrub(self):
+        self.seek_to_frame(self.pending_scrub_index)
 
     def seek_to_frame(self, index: int):
         self.current_frame_index = index
