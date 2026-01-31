@@ -35,16 +35,13 @@ class SpriteSpiteApp:
         current = str(self.current_frame_index)
         existing = self.ui.frames_input.text().strip()
         if existing:
-            # Check if already in list to avoid duplicates
-            indices = self._parse_frame_selection(existing, self.video_loader.frame_count)
-            if self.current_frame_index not in indices:
-                self.ui.frames_input.setText(f"{existing}, {current}")
+            self.ui.frames_input.setText(f"{existing}, {current}")
         else:
             self.ui.frames_input.setText(current)
 
     def _parse_frame_selection(self, selection_str, max_frames):
-        """Parses strings like '0, 5, 10-15' into a sorted list of unique indices."""
-        indices = set()
+        """Parses strings like '5, 0, 10-12' into a list of indices preserving order."""
+        indices = []
         parts = selection_str.replace(' ', '').split(',')
         for part in parts:
             if not part: continue
@@ -52,15 +49,18 @@ class SpriteSpiteApp:
                 if '-' in part:
                     start_str, end_str = part.split('-')
                     s, e = int(start_str), int(end_str)
-                    for i in range(max(0, s), min(e + 1, max_frames)):
-                        indices.add(i)
+                    # For ranges like 10-12, we add 10, 11, 12 in order
+                    step = 1 if s <= e else -1
+                    for i in range(s, e + step, step):
+                        if 0 <= i < max_frames:
+                            indices.append(i)
                 else:
                     idx = int(part)
                     if 0 <= idx < max_frames:
-                        indices.add(idx)
+                        indices.append(idx)
             except ValueError:
                 continue
-        return sorted(list(indices))
+        return indices
 
     def handle_export(self, fmt_str, cols):
         # Determine which frames to export
