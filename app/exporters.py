@@ -48,7 +48,17 @@ class SpriteExporter:
         
         for f in frames:
             if f.shape[2] == 4:
-                bgr = cv2.cvtColor(f, cv2.COLOR_RGBA2BGR)
+                # Create a white background
+                white_bg = np.full((h, w, 3), 255, dtype=np.uint8)
+                
+                # Separate color and alpha channels
+                alpha = f[:, :, 3] / 255.0
+                alpha = np.stack([alpha, alpha, alpha], axis=-1)
+                color = f[:, :, :3]
+                
+                # Composite: (Foreground * Alpha) + (Background * (1 - Alpha))
+                composited = (color * alpha + white_bg * (1 - alpha)).astype(np.uint8)
+                bgr = cv2.cvtColor(composited, cv2.COLOR_RGB2BGR)
             else:
                 bgr = cv2.cvtColor(f, cv2.COLOR_RGB2BGR)
             out.write(bgr)
