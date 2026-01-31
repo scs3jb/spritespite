@@ -17,6 +17,21 @@ SpriteSpite is a specialized Linux desktop application designed for game develop
   - **Godot 4 Integration**: Automatically generates a `.txt` file with grid metadata and import instructions.
   - **MP4 & GIF**: High-quality sequence export (MP4s use a white background for transparency).
 
+## Visual Gallery
+
+### Application Interface
+| Main Interface | Video Loaded |
+| :---: | :---: |
+| ![Empty App](screens/01_empty_app.jpg) | ![Video Loaded](screens/02_video_loaded.jpg) |
+
+| Processing (Crop & Chroma) | Multi-Frame Selector |
+| :---: | :---: |
+| ![Processed](screens/03_processed_preview.jpg) | ![Multi-Frame](screens/04_multi_frame_dialog.jpg) |
+
+### Sample Output
+**Processed Sprite Sheet (PNG with Transparency):**
+![Sample Output](screens/output.png)
+
 ## Prerequisites
 - **Python**: 3.10+
 - **System**: `ffmpeg` (for video decoding support).
