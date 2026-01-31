@@ -35,7 +35,21 @@ class SpriteSpiteApp:
         self.ui.chroma_changed.connect(self.update_chroma)
         self.ui.export_requested.connect(self.handle_export)
         self.ui.add_current_frame_requested.connect(self.add_current_frame_to_list)
+        self.ui.multi_select_requested.connect(self.open_multi_frame_dialog)
         self.ui.play_button.toggled.connect(self.toggle_playback)
+
+    def open_multi_frame_dialog(self):
+        from app.ui import MultiFrameDialog
+        dialog = MultiFrameDialog(self.ui, self.video_loader)
+        if dialog.exec() == MultiFrameDialog.DialogCode.Accepted:
+            selected = dialog.get_selected()
+            if selected:
+                # Update individual mode
+                self.ui.individual_radio.setChecked(True)
+                frames_str = ", ".join(map(str, selected))
+                self.ui.frames_input.setText(frames_str)
+                # Seek to first selected frame
+                self.seek_to_frame(selected[0])
 
     def add_current_frame_to_list(self):
         current = str(self.current_frame_index)

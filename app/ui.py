@@ -2,11 +2,80 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, 
     QPushButton, QLabel, QFileDialog, QFrame, QSlider,
     QSpinBox, QGroupBox, QFormLayout, QCheckBox, QComboBox,
-    QProgressBar, QLineEdit, QRadioButton, QButtonGroup
+    QProgressBar, QLineEdit, QRadioButton, QButtonGroup,
+    QDialog, QScrollArea, QGridLayout
 )
 from PyQt6.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QBrush
-from PyQt6.QtCore import Qt, pyqtSignal, QRect, QPoint
+from PyQt6.QtCore import Qt, pyqtSignal, QRect, QPoint, QSize
 import numpy as np
+
+class MultiFrameDialog(QDialog):
+    def __init__(self, parent, video_loader):
+        super().__init__(parent)
+        self.setWindowTitle("Select Multiple Frames")
+        self.resize(900, 700)
+        self.video_loader = video_loader
+        self.selected_frames = []
+        
+        layout = QVBoxLayout(self)
+        
+        # Scroll Area for thumbnails
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        self.container = QWidget()
+        self.grid = QGridLayout(self.container)
+        scroll.setWidget(self.container)
+        layout.addWidget(scroll)
+        
+        # Buttons
+        btn_layout = QHBoxLayout()
+        ok_btn = QPushButton("OK")
+        ok_btn.clicked.connect(self.accept)
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.reject)
+        btn_layout.addStretch()
+        btn_layout.addWidget(ok_btn)
+        btn_layout.addWidget(cancel_btn)
+        layout.addLayout(btn_layout)
+        
+        self.checkboxes = {}
+        self._populate()
+
+    def _populate(self):
+        # We generate thumbnails for all frames
+        # For performance in long videos, we cap the display or use steps
+        # but here we'll try to show them all as requested, using a small size.
+        count = self.video_loader.frame_count
+        cols = 5
+        
+        for i in range(count):
+            frame_vbox = QVBoxLayout()
+            
+            # Thumbnail
+            thumb_label = QLabel()
+            thumb_label.setFixedSize(160, 90)
+            thumb_label.setStyleSheet("background-color: black;")
+            thumb_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            
+            frame = self.video_loader.get_frame(i)
+            if frame is not None:
+                h, w = frame.shape[:2]
+                qimg = QImage(frame.data, w, h, 3 * w, QImage.Format.Format_RGB888).copy()
+                pix = QPixmap.fromImage(qimg).scaled(160, 90, Qt.AspectRatioMode.KeepAspectRatio)
+                thumb_label.setPixmap(pix)
+            
+            cb = QCheckBox(f"Frame {i}")
+            self.checkboxes[i] = cb
+            
+            frame_vbox.addWidget(thumb_label)
+            frame_vbox.addWidget(cb)
+            
+            frame_widget = QWidget()
+            frame_widget.setLayout(frame_vbox)
+            self.grid.addWidget(frame_widget, i // cols, i % cols)
+
+    def get_selected(self):
+        return [i for i, cb in self.checkboxes.items() if cb.isChecked()]
 
 class PreviewLabel(QLabel):
     margins_selected = pyqtSignal(int, int, int, int)
@@ -127,6 +196,7 @@ class MainWindow(QMainWindow):
     chroma_changed = pyqtSignal(bool, tuple, int, int)
     export_requested = pyqtSignal(str, int)
     add_current_frame_requested = pyqtSignal()
+    multi_select_requested = pyqtSignal()
 
     def __init__(self, on_open_file_callback):
         super().__init__()
@@ -184,6 +254,11 @@ class MainWindow(QMainWindow):
         self.add_frame_btn = QPushButton("Add Current Frame")
         self.add_frame_btn.clicked.connect(lambda: self.add_current_frame_requested.emit())
         indiv_layout.addWidget(self.add_frame_btn)
+        
+        self.multi_frame_btn = QPushButton("Select Multiple Frames...")
+        self.multi_frame_btn.clicked.connect(lambda: self.multi_select_requested.emit())
+        indiv_layout.addWidget(self.multi_frame_btn)
+        
         sel_layout.addWidget(self.individual_widget)
         
         self.range_radio.toggled.connect(lambda b: self.range_widget.setVisible(b))
