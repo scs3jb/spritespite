@@ -15,6 +15,7 @@ class ImageProcessor:
         self.target_color_rgb = (0, 255, 0)
         self.tolerance = 30
         self.edge_trim = 0
+        self.exclusion_points = [] # List of (x, y) in original image coordinates
         
         # Resizing
         self.resize_w = 0
@@ -31,11 +32,13 @@ class ImageProcessor:
         self.margin_bottom = bottom
         self.use_crop = (left > 0 or top > 0 or right > 0 or bottom > 0)
 
-    def set_chroma_settings(self, enabled, color_rgb, tolerance, edge_trim):
+    def set_chroma_settings(self, enabled, color_rgb, tolerance, edge_trim, exclusion_points=None):
         self.use_chroma = enabled
         self.target_color_rgb = color_rgb
         self.tolerance = tolerance
         self.edge_trim = edge_trim
+        if exclusion_points is not None:
+            self.exclusion_points = exclusion_points
 
     def set_resize(self, enabled, w, h):
         self.use_resize = enabled
@@ -49,8 +52,9 @@ class ImageProcessor:
         result = frame
         
         # 1. Apply Crop
+        img_h, img_w = frame.shape[:2]
+        x1, y1, x2, y2 = 0, 0, img_w, img_h
         if self.use_crop:
-            img_h, img_w = frame.shape[:2]
             x1 = max(0, min(self.margin_left, img_w - 1))
             y1 = max(0, min(self.margin_top, img_h - 1))
             x2 = max(x1 + 1, min(img_w - self.margin_right, img_w))
@@ -77,6 +81,30 @@ class ImageProcessor:
             solid_foreground = np.zeros_like(foreground_mask)
             cv2.drawContours(solid_foreground, contours, -1, 255, thickness=cv2.FILLED)
             
+            # Apply manual exclusions
+            if self.exclusion_points:
+                for px, py in self.exclusion_points:
+                    # Map original coordinates to cropped coordinates
+                    cx, cy = px - x1, py - y1
+                    # Ensure coordinates are within the current cropped frame
+                    if 0 <= cx < result.shape[1] and 0 <= cy < result.shape[0]:
+                        # If the clicked point was originally background, remove that connected component from the solid foreground
+                        if mask[cy, cx] == 255:
+                            # Find all connected background pixels from this point
+                            flood_mask = np.zeros((mask.shape[0] + 2, mask.shape[1] + 2), np.uint8)
+                            cv2.floodFill(mask, flood_mask, (cx, cy), 255, flags=cv2.FLOODFILL_MASK_ONLY | (1 << 8))
+                            comp_mask = (flood_mask[1:-1, 1:-1] == 1)
+                            solid_foreground[comp_mask] = 0
+                        else:
+                            # If it wasn't background, try a color-based flood fill on the original image
+                            # to remove the specific color component
+                            flood_mask = np.zeros((result.shape[0] + 2, result.shape[1] + 2), np.uint8)
+                            cv2.floodFill(result, flood_mask, (cx, cy), (0, 0, 0, 0), 
+                                          loDiff=(10, 10, 10), upDiff=(10, 10, 10),
+                                          flags=cv2.FLOODFILL_MASK_ONLY | (1 << 8))
+                            comp_mask = (flood_mask[1:-1, 1:-1] == 1)
+                            solid_foreground[comp_mask] = 0
+
             if self.edge_trim > 0:
                 kernel = np.ones((3, 3), np.uint8)
                 solid_foreground = cv2.erode(solid_foreground, kernel, iterations=self.edge_trim)

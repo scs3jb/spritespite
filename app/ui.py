@@ -64,6 +64,7 @@ class MultiFrameDialog(QDialog):
 class PreviewLabel(QLabel):
     margins_selected = pyqtSignal(int, int, int, int)
     color_picked = pyqtSignal(int, int, int)
+    area_removal_requested = pyqtSignal(int, int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -73,6 +74,7 @@ class PreviewLabel(QLabel):
         self.selection_start = None
         self.is_selecting = False
         self.is_picking_color = False
+        self.is_removing_area = False
         self.full_pixmap = None
         self.processed_pixmap = None
         self.scaled_pixmap_rect = QRect()
@@ -112,9 +114,18 @@ class PreviewLabel(QLabel):
         self.scaled_pixmap_rect = QRect((lx - pw) // 2, (ly - ph) // 2, pw, ph)
         self.update()
 
+    def set_exclusion_points(self, points):
+        self.exclusion_points = points
+        self.update()
+
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton and self.scaled_pixmap_rect.contains(event.pos()):
+            if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+                self._pick_color(event.pos())
+                return
+            
             if self.is_picking_color: self._pick_color(event.pos())
+            elif self.is_removing_area: self._remove_area(event.pos())
             elif not self.show_cropped_only:
                 self.selection_start = event.pos()
                 self.is_selecting = True
@@ -129,18 +140,43 @@ class PreviewLabel(QLabel):
             self._finalize_selection(event.pos())
             self.update()
 
+    def _get_image_coords(self, pos):
+        # Calculate coordinates relative to the pixmap
+        local_x = pos.x() - self.scaled_pixmap_rect.left()
+        local_y = pos.y() - self.scaled_pixmap_rect.top()
+        
+        if self.show_cropped_only and self.processed_pixmap:
+            # When showing cropped, the coordinate space is the cropped image
+            cw, ch = self.processed_pixmap.width(), self.processed_pixmap.height()
+            sx = cw / self.scaled_pixmap_rect.width()
+            sy = ch / self.scaled_pixmap_rect.height()
+            cx, cy = int(local_x * sx), int(local_y * sy)
+            # Map back to original coordinates
+            return cx + self.margin_left, cy + self.margin_top
+        else:
+            # Map to original image coordinates directly
+            sx = self.image_size[0] / self.scaled_pixmap_rect.width()
+            sy = self.image_size[1] / self.scaled_pixmap_rect.height()
+            return int(local_x * sx), int(local_y * sy)
+
     def _pick_color(self, pos):
-        sx, sy = self.image_size[0] / self.scaled_pixmap_rect.width(), self.image_size[1] / self.scaled_pixmap_rect.height()
-        ix, iy = int((pos.x() - self.scaled_pixmap_rect.left()) * sx), int((pos.y() - self.scaled_pixmap_rect.top()) * sy)
+        if not self.full_pixmap: return
+        ix, iy = self._get_image_coords(pos)
         img = self.full_pixmap.toImage()
         if 0 <= ix < img.width() and 0 <= iy < img.height():
             c = QColor(img.pixel(ix, iy))
             self.color_picked.emit(c.red(), c.green(), c.blue())
 
+    def _remove_area(self, pos):
+        if not self.full_pixmap: return
+        ix, iy = self._get_image_coords(pos)
+        self.area_removal_requested.emit(ix, iy)
+
     def _finalize_selection(self, end):
         if not self.selection_start: return
         rect = QRect(self.selection_start, end).normalized().intersected(self.scaled_pixmap_rect)
         if rect.width() < 5 or rect.height() < 5: return
+        # Selection is always done on the full view
         sx, sy = self.image_size[0] / self.scaled_pixmap_rect.width(), self.image_size[1] / self.scaled_pixmap_rect.height()
         x1, y1 = int((rect.left() - self.scaled_pixmap_rect.left()) * sx), int((rect.top() - self.scaled_pixmap_rect.top()) * sy)
         x2, y2 = int((rect.right() - self.scaled_pixmap_rect.left() + 1) * sx), int((rect.bottom() - self.scaled_pixmap_rect.top() + 1) * sy)
@@ -152,8 +188,13 @@ class PreviewLabel(QLabel):
         if not self.scaled_pixmap_rect.isEmpty(): painter.drawTiledPixmap(self.scaled_pixmap_rect, self.checker_pixmap)
         painter.end()
         super().paintEvent(event)
-        if not self.full_pixmap or self.show_cropped_only: return
+        if not self.full_pixmap: return
+        
         painter = QPainter(self)
+        if self.show_cropped_only: 
+            painter.end()
+            return
+
         if self.is_selecting and self.selection_start:
             rect = QRect(self.selection_start, self.mapFromGlobal(self.cursor().pos())).normalized()
             painter.setPen(QPen(QColor(0, 255, 0), 2))
@@ -177,7 +218,7 @@ class MainWindow(QMainWindow):
     frame_changed = pyqtSignal(int)
     range_changed = pyqtSignal(int, int)
     crop_changed = pyqtSignal(int, int, int, int)
-    chroma_changed = pyqtSignal(bool, tuple, int, int)
+    chroma_changed = pyqtSignal(bool, tuple, int, int, list)
     export_requested = pyqtSignal(str, int)
     add_current_frame_requested = pyqtSignal()
     multi_select_requested = pyqtSignal()
@@ -312,12 +353,24 @@ class MainWindow(QMainWindow):
         self.pick_color_button.setCheckable(True)
         self.pick_color_button.toggled.connect(self._handle_pick_mode)
         color_row.addWidget(self.pick_color_button)
+        
+        self.remove_area_button = QPushButton("Remove Area")
+        self.remove_area_button.setCheckable(True)
+        self.remove_area_button.toggled.connect(self._handle_remove_mode)
+        color_row.addWidget(self.remove_area_button)
+
         self.color_preview = QLabel()
         self.color_preview.setFixedSize(30, 30)
         self.color_preview.setStyleSheet("background-color: green; border: 1px solid white;")
         color_row.addWidget(self.color_preview)
         chroma_layout.addLayout(color_row)
         self.chroma_color = (0, 255, 0)
+        self.exclusion_points = []
+        
+        self.clear_points_button = QPushButton("Clear Removal Points")
+        self.clear_points_button.clicked.connect(self._clear_removal_points)
+        chroma_layout.addWidget(self.clear_points_button)
+
         chroma_layout.addWidget(QLabel("Tolerance:"))
         self.tolerance_slider = QSlider(Qt.Orientation.Horizontal)
         self.tolerance_slider.setRange(0, 100)
@@ -372,6 +425,7 @@ class MainWindow(QMainWindow):
         self.preview_label = PreviewLabel()
         self.preview_label.margins_selected.connect(self._handle_mouse_crop)
         self.preview_label.color_picked.connect(self._handle_color_picked)
+        self.preview_label.area_removal_requested.connect(self._handle_area_removal)
         right_layout.addWidget(self.preview_label, stretch=1)
         nav_layout = QVBoxLayout()
         self.scrub_slider = QSlider(Qt.Orientation.Horizontal)
@@ -398,17 +452,32 @@ class MainWindow(QMainWindow):
         self._handle_crop_change()
 
     def _handle_pick_mode(self, a):
+        if a: self.remove_area_button.setChecked(False)
         self.preview_label.is_picking_color = a
         self.preview_label.setCursor(Qt.CursorShape.CrossCursor if a else Qt.CursorShape.ArrowCursor)
         self.pick_color_button.setText("Click Frame..." if a else "Pick Color")
+
+    def _handle_remove_mode(self, a):
+        if a: self.pick_color_button.setChecked(False)
+        self.preview_label.is_removing_area = a
+        self.preview_label.setCursor(Qt.CursorShape.PointingHandCursor if a else Qt.CursorShape.ArrowCursor)
+        self.remove_area_button.setText("Click to Remove..." if a else "Remove Area")
 
     def _handle_color_picked(self, r, g, b):
         self.chroma_color = (r, g, b)
         self.color_preview.setStyleSheet(f"background-color: rgb({r},{g},{b}); border: 1px solid white;")
         self.pick_color_button.setChecked(False); self._handle_chroma_change()
 
+    def _handle_area_removal(self, x, y):
+        self.exclusion_points.append((x, y))
+        self._handle_chroma_change()
+
+    def _clear_removal_points(self):
+        self.exclusion_points = []
+        self._handle_chroma_change()
+
     def _handle_chroma_change(self):
-        self.chroma_changed.emit(self.chroma_group.isChecked(), self.chroma_color, self.tolerance_slider.value(), self.edge_trim_slider.value())
+        self.chroma_changed.emit(self.chroma_group.isChecked(), self.chroma_color, self.tolerance_slider.value(), self.edge_trim_slider.value(), self.exclusion_points)
 
     def _handle_resize_preset(self, text):
         if text == "Orig": self.resize_group.setChecked(False)
@@ -434,6 +503,7 @@ class MainWindow(QMainWindow):
         self.end_frame_spin.setRange(0, c - 1); self.end_frame_spin.setValue(c - 1)
         for s, m in zip([self.crop_left_spin, self.crop_top_spin, self.crop_right_spin, self.crop_bottom_spin], [w, h, w, h]): s.setRange(0, m - 1)
         self.resize_w_spin.setValue(w); self.resize_h_spin.setValue(h); self.reset_crop()
+        self._clear_removal_points()
 
     def reset_crop(self):
         for s in [self.crop_left_spin, self.crop_top_spin, self.crop_right_spin, self.crop_bottom_spin]: s.setValue(0)
@@ -457,6 +527,7 @@ class MainWindow(QMainWindow):
             h, w = a.shape[:2]; f = QImage.Format.Format_RGB888 if a.shape[2] == 3 else QImage.Format.Format_RGBA8888
             return QPixmap.fromImage(QImage(a.data, w, h, a.strides[0], f).copy())
         m = (self.crop_left_spin.value(), self.crop_top_spin.value(), self.crop_right_spin.value(), self.crop_bottom_spin.value())
+        self.preview_label.set_exclusion_points(self.exclusion_points)
         self.preview_label.set_frame(to_pix(full), to_pix(proc), (full.shape[1], full.shape[0]), m, self.crop_group.isChecked())
 
     def set_progress(self, v): self.progress_bar.setVisible(0 < v < 100); self.progress_bar.setValue(v)

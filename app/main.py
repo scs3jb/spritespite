@@ -133,8 +133,8 @@ class SpriteSpiteApp:
         self.processor.set_crop_margins(left, top, right, bottom)
         self.seek_to_frame(self.current_frame_index)
 
-    def update_chroma(self, enabled, color, tolerance, edge_trim):
-        self.processor.set_chroma_settings(enabled, color, tolerance, edge_trim)
+    def update_chroma(self, enabled, color, tolerance, edge_trim, exclusion_points):
+        self.processor.set_chroma_settings(enabled, color, tolerance, edge_trim, exclusion_points)
         self.seek_to_frame(self.current_frame_index)
 
     def update_resize(self, enabled, w, h):
