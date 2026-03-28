@@ -63,7 +63,9 @@ class ImageProcessor:
 
         # 2. Apply Chroma Key (convert to RGBA)
         if self.use_chroma:
-            hsv = cv2.cvtColor(result, cv2.COLOR_RGB2HSV)
+            # Explicitly use only RGB for color space conversion if the image has an alpha channel
+            rgb_only = result[:, :, :3]
+            hsv = cv2.cvtColor(rgb_only, cv2.COLOR_RGB2HSV)
             target_np = np.uint8([[self.target_color_rgb]])
             target_hsv = cv2.cvtColor(target_np, cv2.COLOR_RGB2HSV)[0][0]
             
@@ -109,7 +111,7 @@ class ImageProcessor:
                 kernel = np.ones((3, 3), np.uint8)
                 solid_foreground = cv2.erode(solid_foreground, kernel, iterations=self.edge_trim)
             
-            rgba = cv2.cvtColor(result, cv2.COLOR_RGB2RGBA)
+            rgba = cv2.cvtColor(rgb_only, cv2.COLOR_RGB2RGBA)
             rgba[:, :, 3] = solid_foreground
             result = rgba
 

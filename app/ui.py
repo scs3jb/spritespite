@@ -443,7 +443,10 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(right_panel)
 
     def _handle_open_file(self):
-        p, _ = QFileDialog.getOpenFileName(self, "Open Video", "", "Video (*.mp4 *.gif *.mkv *.webm);;All (*)")
+        p, _ = QFileDialog.getOpenFileName(
+            self, "Open Media", "", 
+            "Media Files (*.mp4 *.gif *.mkv *.webm *.png *.jpg *.jpeg *.webp);;All (*)"
+        )
         if p: self.on_open_file_callback(p)
 
     def _handle_mouse_crop(self, l, t, r, b):
